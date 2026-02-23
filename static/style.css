@@ -1,0 +1,353 @@
+/* ========================================
+   MARCO ! POLO ! - Styles Custom DSFR
+   ======================================== */
+
+/* Variables custom complémentaires */
+:root {
+  --custom-bg-light: #f6f6f6;
+}
+
+/* ========== LAYOUT CUSTOM ========== */
+.spinner {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--custom-bg-light);
+  border-top: 3px solid var(--artwork-minor-blue-france);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* ========== FOLDER SELECTOR ========== */
+.folder-selector {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.folder-path {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: var(--background-default-grey);
+  border: 1px solid var(--border-default-grey);
+  border-radius: 0.25rem;
+  color: var(--text-mention-grey);
+  min-width: 200px;
+}
+
+/* ========== FIELDS CONTAINER ========== */
+.fields-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.field-category {
+  background: var(--background-default-grey);
+  border: 1px solid var(--border-default-grey);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.field-category-title {
+  font-weight: 700;
+  font-size: 1.125rem;
+  margin-bottom: 1rem;
+  color: var(--text-title-blue-france);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fields-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.field-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: white;
+  border: 1px solid var(--border-default-grey);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.field-checkbox-item:hover {
+  background: var(--background-contrast-grey);
+  border-color: var(--border-plain-blue-france);
+}
+
+.field-checkbox-item input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.field-checkbox-item label {
+  cursor: pointer;
+  margin: 0;
+  font-weight: normal;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* ========== SELECTED FIELDS ========== */
+.selected-fields-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Les tags utilisent les styles DSFR (fr-tag) */
+
+/* ========== CATEGORIES (Accordéons DSFR) ========== */
+.category-item {
+  background: white;
+  border: 1px solid var(--border-default-grey);
+  border-radius: 0.25rem;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+  transition: all 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.category-item:hover {
+  border-color: var(--border-plain-blue-france);
+  box-shadow: 0 2px 6px rgba(0, 0, 145, 0.1);
+}
+
+.category-item.selected {
+  border-color: var(--border-plain-blue-france);
+  box-shadow: 0 4px 12px rgba(0, 0, 145, 0.15);
+}
+
+.category-header {
+  padding: 1rem 1.5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: white;
+  transition: background 0.2s;
+}
+
+.category-header:hover {
+  background: var(--background-default-grey);
+}
+
+.category-item.selected .category-header {
+  background: var(--background-contrast-blue-france);
+}
+
+.category-checkbox {
+  width: 1.25rem;
+  height: 1.25rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  accent-color: var(--background-flat-blue-france);
+}
+
+.category-info {
+  flex: 1;
+}
+
+.category-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text-default-grey);
+  margin-bottom: 0.25rem;
+}
+
+.category-count {
+  font-size: 0.75rem;
+  color: var(--text-mention-grey);
+  font-weight: 400;
+}
+
+.category-accordion-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+  background: var(--background-default-grey);
+}
+
+.category-accordion-content.open {
+  max-height: 800px;
+  transition: max-height 0.3s ease-in;
+}
+
+/* ========== RENAME CONFIGURATION ========== */
+.category-rename-config {
+  padding: 1.5rem;
+  border-top: 1px solid var(--border-default-grey);
+  background: white;
+}
+
+.pattern-label {
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  display: block;
+  color: var(--text-label-grey);
+}
+
+.pattern-input-full {
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-default-grey);
+  border-radius: 0.25rem;
+  font-family: "Courier New", monospace;
+  font-size: 0.875rem;
+  background: var(--background-contrast-grey);
+}
+
+.pattern-input-full:focus {
+  outline: 2px solid var(--border-plain-blue-france);
+  outline-offset: 2px;
+  background: white;
+}
+
+.fields-helper-text {
+  font-size: 0.875rem;
+  color: var(--text-mention-grey);
+  margin-bottom: 1rem;
+  display: block;
+}
+
+.fields-tags-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--background-alt-grey);
+  border-radius: 0.25rem;
+}
+
+/* Tags DSFR - on retire les styles custom pour utiliser ceux du DSFR */
+.field-tag {
+  /* Les styles viennent de fr-tag du DSFR */
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.field-tag:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 145, 0.15);
+}
+
+.field-tag:active {
+  transform: scale(0.98);
+}
+
+.pattern-preview {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--background-contrast-blue-france);
+  border-left: 4px solid var(--border-plain-blue-france);
+  border-radius: 0.25rem;
+}
+
+.pattern-preview-label {
+  font-weight: 700;
+  font-size: 0.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-mention-grey);
+}
+
+.pattern-preview-example {
+  font-family: "Courier New", "Courier", monospace;
+  color: var(--text-action-high-blue-france);
+  font-size: 0.875rem;
+  word-break: break-all;
+}
+
+/* ========== PROGRESS BAR ========== */
+.progress-bar {
+  width: 100%;
+  height: 2rem;
+  background: var(--background-default-grey);
+  border-radius: 0.25rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--background-flat-blue-france);
+  transition: width 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+  .folder-selector {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .folder-path {
+    width: 100%;
+  }
+
+  .category-accordion-content.open {
+    max-height: 800px;
+  }
+
+  .fields-grid {
+    flex-direction: column;
+  }
+
+  .field-checkbox-item {
+    width: 100%;
+  }
+}
+
+/* ========== UTILITAIRES ========== */
+.fr-text--center {
+  text-align: center;
+}
+
+.fr-btn--lg {
+  font-size: 1.125rem;
+  padding: 0.75rem 2rem;
+}
+/* Tags sélectionnés en bleu */
+.selected-field-tag {
+  background-color: #e3e3fd !important;
+  color: #000091 !important;
+}
+/* Bouton Quitter à droite */
+.fr-header__tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.fr-header__body-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}

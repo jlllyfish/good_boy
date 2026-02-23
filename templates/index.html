@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>goodboy - Téléchargement DN</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='dsfr/css/dsfr.min.css') }}"
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="{{ url_for('static', filename='goodboy.svg') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <header role="banner" class="fr-header">
+      <div class="fr-header__body">
+        <div class="fr-container">
+          <div class="fr-header__body-row">
+            <div class="fr-header__brand fr-enlarge-link">
+              <div class="fr-header__brand-top">
+                <div class="fr-header__logo">
+                  <p class="fr-logo">
+                    République
+                    <br />Française
+                  </p>
+                </div>
+              </div>
+              <div class="fr-header__service">
+                <h1 class="fr-h3" style="display: flex; align-items: flex-end">
+                  <img
+                    src="{{ url_for('static', filename='goodboy.svg') }}"
+                    alt=""
+                    style="
+                      height: 2.5em;
+                      vertical-align: middle;
+                      margin-left: 0.5rem;
+                    "
+                  />
+                  Good Boy !
+                </h1>
+                <p class="fr-header__service-tagline">
+                  Téléchargement de pièces jointes Démarche Numérique
+                </p>
+              </div>
+            </div>
+            <div class="fr-header__tools">
+              <div class="fr-header__tools-links">
+                <ul class="fr-btns-group">
+                  <li>
+                    <button
+                      id="quit-app"
+                      class="fr-btn fr-btn--secondary fr-btn--sm"
+                    >
+                      Quitter
+                    </button>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        class="fr-header__menu fr-modal"
+        id="modal-header-navigation"
+        aria-labelledby="button-header-navigation"
+      >
+        <div class="fr-container">
+          <nav
+            class="fr-nav"
+            role="navigation"
+            aria-label="Menu principal"
+          ></nav>
+        </div>
+      </div>
+    </header>
+
+    <main role="main" id="content">
+      <div class="fr-container fr-my-6w">
+        <section class="fr-mb-6w">
+          <div class="fr-grid-row">
+            <div class="fr-col-12">
+              <h2 class="fr-h3">Configuration</h2>
+              <div class="fr-input-group">
+                <label class="fr-label" for="api-token">
+                  Token API Démarche Numérique
+                  <span class="fr-hint-text">
+                    Obtenez votre token sur
+                    <a
+                      href="https://demarche.numerique.gouv.fr/profil"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >votre profil DN</a
+                    >
+                  </span>
+                </label>
+                <input
+                  class="fr-input"
+                  type="password"
+                  id="api-token"
+                  placeholder="Votre token API"
+                />
+              </div>
+
+              <div class="fr-checkbox-group fr-mt-2w">
+                <input type="checkbox" id="use-proxy" name="use-proxy" />
+                <label class="fr-label" for="use-proxy">
+                  Utiliser le proxy (réseau interne uniquement)
+                </label>
+              </div>
+
+              <div class="fr-input-group fr-mt-3w">
+                <label class="fr-label" for="demarche-number">
+                  Numéro de démarche
+                </label>
+                <div
+                  class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle"
+                >
+                  <div class="fr-col-12 fr-col-md-6">
+                    <input
+                      class="fr-input"
+                      type="number"
+                      id="demarche-number"
+                      placeholder="Ex: 70018"
+                    />
+                  </div>
+                  <div class="fr-col-12 fr-col-md-6">
+                    <div style="display: flex; align-items: center; gap: 1rem">
+                      <button id="load-demarche" class="fr-btn">
+                        Charger la démarche
+                      </button>
+                      <span
+                        id="loading-spinner"
+                        class="spinner"
+                        style="display: none"
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                id="demarche-info"
+                class="fr-callout fr-mt-3w"
+                style="display: none"
+              >
+                <h3 class="fr-callout__title" id="demarche-title"></h3>
+                <p class="fr-callout__text" id="demarche-count"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="fields-section" class="fr-mb-6w" style="display: none">
+          <div class="fr-grid-row">
+            <div class="fr-col-12">
+              <h2 class="fr-h3">
+                Étape 1 : Sélectionnez les champs pour le renommage
+              </h2>
+              <p class="fr-text--sm fr-text-mention--grey">
+                Choisissez les champs que vous utiliserez dans vos patterns de
+                renommage
+              </p>
+              <div
+                id="available-fields"
+                class="fields-container fr-mt-3w"
+              ></div>
+              <div
+                id="selected-fields-preview"
+                class="fr-callout fr-mt-3w"
+                style="display: none"
+              >
+                <p class="fr-callout__title">Champs sélectionnés</p>
+                <div
+                  id="selected-fields-list"
+                  class="selected-fields-list"
+                ></div>
+              </div>
+              <button
+                id="validate-fields"
+                class="fr-btn fr-mt-3w"
+                style="display: none"
+              >
+                Valider et continuer
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="categories-section" class="fr-mb-6w" style="display: none">
+          <div class="fr-grid-row">
+            <div class="fr-col-12">
+              <h2 class="fr-h3">
+                Étape 2 : Sélectionnez les catégories de pièces jointes
+              </h2>
+              <p class="fr-text--sm fr-text-mention--grey">
+                Cliquez sur une catégorie pour définir son pattern de renommage
+              </p>
+
+              <div class="fr-callout fr-callout--blue-ecume fr-mt-3w">
+                <h3 class="fr-callout__title">
+                  📅 Filtrer par date de dépôt (optionnel)
+                </h3>
+                <p class="fr-callout__text">
+                  Sélectionnez une période pour ne télécharger que les dossiers
+                  déposés entre ces dates
+                </p>
+                <div class="fr-grid-row fr-grid-row--gutters fr-mt-2w">
+                  <div class="fr-col-6">
+                    <label class="fr-label" for="date-debut">Date début</label>
+                    <input class="fr-input" type="date" id="date-debut" />
+                  </div>
+                  <div class="fr-col-6">
+                    <label class="fr-label" for="date-fin">Date fin</label>
+                    <input class="fr-input" type="date" id="date-fin" />
+                  </div>
+                </div>
+                <div class="fr-mt-2w" style="text-align: center">
+                  <button
+                    id="apply-date-filter"
+                    class="fr-btn fr-btn--secondary fr-btn--sm"
+                  >
+                    Appliquer le filtre
+                  </button>
+                  <button
+                    id="reset-date-filter"
+                    class="fr-btn fr-btn--secondary fr-btn--sm fr-ml-2w"
+                  >
+                    Réinitialiser
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="fr-input-group fr-mt-3w"
+                id="folder-selector-container"
+              >
+                <label class="fr-label">Dossier de destination</label>
+                <div class="folder-selector">
+                  <button
+                    id="select-folder"
+                    class="fr-btn fr-btn--secondary fr-btn--icon-left fr-icon-folder-2-line"
+                  >
+                    Choisir un dossier
+                  </button>
+                  <span id="folder-path" class="folder-path"
+                    >Aucun dossier sélectionné</span
+                  >
+                </div>
+              </div>
+
+              <div
+                id="pj-categories-list"
+                class="fr-accordions-group fr-mt-3w"
+              ></div>
+
+              <div
+                id="categories-summary"
+                class="fr-mt-4w"
+                style="display: none; text-align: center"
+              >
+                <p class="fr-text--lg fr-mb-2w">
+                  <strong><span id="total-files-count">0</span></strong>
+                  fichier(s) sélectionné(s)
+                </p>
+                <button
+                  id="download-btn"
+                  class="fr-btn fr-btn--lg fr-btn--icon-left fr-icon-download-line"
+                >
+                  Télécharger la sélection
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="progress-section" class="fr-mb-6w" style="display: none">
+          <div class="fr-grid-row">
+            <div class="fr-col-12">
+              <h2 class="fr-h3">Téléchargement en cours...</h2>
+              <div class="progress-bar fr-mt-3w">
+                <div class="progress-fill" id="progress-fill"></div>
+              </div>
+              <p id="progress-text" class="fr-text--center fr-mt-2w">0%</p>
+
+              <!-- Accordéon de logs simple -->
+              <div
+                class="fr-mt-4w"
+                style="border: 1px solid #ddd; border-radius: 4px"
+              >
+                <button
+                  onclick="
+                    document.getElementById('download-logs').style.display =
+                      document.getElementById('download-logs').style.display ===
+                      'none'
+                        ? 'block'
+                        : 'none'
+                  "
+                  style="
+                    width: 100%;
+                    padding: 1rem;
+                    background: #f6f6f6;
+                    border: none;
+                    cursor: pointer;
+                    text-align: left;
+                    font-weight: bold;
+                  "
+                >
+                  Détails du téléchargement ▼
+                </button>
+                <div id="download-logs" style="display: none">
+                  <div
+                    id="download-logs-content"
+                    style="
+                      max-height: 300px;
+                      overflow-y: auto;
+                      font-family: monospace;
+                      font-size: 0.9rem;
+                      padding: 1rem;
+                      background-color: #fff;
+                    "
+                  >
+                    <!-- Les logs apparaîtront ici -->
+                  </div>
+                </div>
+              </div>
+
+              <div
+                id="download-complete"
+                style="display: none; text-align: center; margin-top: 2rem"
+              >
+                <button id="new-download-btn" class="fr-btn fr-btn--secondary">
+                  Nouveau téléchargement
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="fr-footer" role="contentinfo" id="footer">
+      <div class="fr-container">
+        <div class="fr-footer__body">
+          <div class="fr-footer__brand fr-enlarge-link">
+            <a href="/" title="Retour à l'accueil du site - Good Boy !">
+              <p class="fr-logo">
+                République
+                <br />Française
+              </p>
+            </a>
+          </div>
+          <div class="fr-footer__content">
+            <p class="fr-footer__content-desc">
+              Good Boy ! facilite le téléchargement et le renommage automatique
+              des pièces jointes depuis Démarche Numérique.<br />Draaf Occitanie
+            </p>
+            <ul class="fr-footer__content-list">
+              <li class="fr-footer__content-item">
+                <a
+                  class="fr-footer__content-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href="https://legifrance.gouv.fr"
+                  >legifrance.gouv.fr</a
+                >
+              </li>
+              <li class="fr-footer__content-item">
+                <a
+                  class="fr-footer__content-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href="https://gouvernement.fr"
+                  >gouvernement.fr</a
+                >
+              </li>
+              <li class="fr-footer__content-item">
+                <a
+                  class="fr-footer__content-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href="https://service-public.fr"
+                  >service-public.fr</a
+                >
+              </li>
+              <li class="fr-footer__content-item">
+                <a
+                  class="fr-footer__content-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href="https://data.gouv.fr"
+                  >data.gouv.fr</a
+                >
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="fr-footer__bottom">
+          <ul class="fr-footer__bottom-list">
+            <li class="fr-footer__bottom-item">
+              <a class="fr-footer__bottom-link" href="javascript:void(0)"
+                >Accessibilité : non conforme</a
+              >
+            </li>
+            <li class="fr-footer__bottom-item">
+              <a class="fr-footer__bottom-link" href="javascript:void(0)"
+                >Mentions légales</a
+              >
+            </li>
+            <li class="fr-footer__bottom-item">
+              <a class="fr-footer__bottom-link" href="javascript:void(0)"
+                >Données personnelles</a
+              >
+            </li>
+          </ul>
+          <div class="fr-footer__bottom-copy">
+            <p>
+              Sauf mention contraire, tous les contenus de ce site sont sous
+              <a
+                href="https://github.com/etalab/licence-ouverte/blob/master/LO.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                >licence etalab-2.0</a
+              >
+            </p>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script
+      type="module"
+      src="{{ url_for('static', filename='dsfr/js/dsfr.module.min.js') }}"
+    ></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
