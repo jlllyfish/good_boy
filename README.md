@@ -56,7 +56,7 @@ Obtenez votre token sur https://www.demarches-simplifiees.fr/profil
 ## 🏛️ Conformité
 
 - Interface conforme DSFR 1.12
-- Compatible réseau RIE Agriculture
+- Compatible réseau RIE Agriculture (DRaaf) et RIE DDT
 - Détection automatique de proxy PAC
 
 ## 📝 License
@@ -66,4 +66,4 @@ Usage interne administration française
 ## 🤝 Contribution
 
 Application développée pour les DRAAF/DDT
-DRAAF Occitanie 2026
+- DRAAF Occitanie 2026
