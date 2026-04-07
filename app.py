@@ -290,8 +290,7 @@ def extract_champ_value(champ):
     if typename == 'SiretChamp':
         etablissement = champ.get('etablissement')
         if etablissement:
-            entreprise = etablissement.get('entreprise')
-            return entreprise.get('raisonSociale') if entreprise else None
+            return etablissement.get('siret')
         return None
     
     # Champs spéciaux
