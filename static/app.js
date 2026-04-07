@@ -566,9 +566,7 @@ function buildFileName(pattern, champsValues, pj) {
       }
 
       const matchingKey = Object.keys(champsValues).find(
-        (key) =>
-          key.toLowerCase() === fieldName.toLowerCase() &&
-          key !== "__repetition_rows",
+        (key) => key === fieldName && key !== "__repetition_rows",
       );
       if (matchingKey && champsValues[matchingKey]) {
         return sanitizeFilename(champsValues[matchingKey]);
@@ -585,9 +583,7 @@ function buildFileName(pattern, champsValues, pj) {
 
       // Chercher d'abord une correspondance exacte
       const matchingKey = Object.keys(champsValues).find(
-        (key) =>
-          key.toLowerCase() === fieldName.toLowerCase() &&
-          key !== "__repetition_rows",
+        (key) => key === fieldName && key !== "__repetition_rows",
       );
       if (matchingKey && champsValues[matchingKey]) {
         return sanitizeFilename(champsValues[matchingKey]);
