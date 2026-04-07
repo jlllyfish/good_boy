@@ -68,8 +68,8 @@ Le fichier `config.json` doit être placé dans le même dossier que `Good_Boy.e
   "ds_api_url": "https://demarche.numerique.gouv.fr/api/v2/graphql",
 
   "pac_urls": [
-    "http://conf.proxy.national.agri/?sf",
-    "http://configate.interieur.rie.gouv.fr:8888/config-ATE-DDT.pl"
+    "http:/xxxx",
+    "http://xxxx"
   ],
 
   "pac_test_url": "https://www.demarches-simplifiees.fr"
