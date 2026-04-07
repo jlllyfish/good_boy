@@ -648,90 +648,109 @@ async function downloadSelected() {
   }
 
   const useProxy = document.getElementById("use-proxy").checked;
+  const CONCURRENCY = 6;
+
+  // Réinitialiser la barre avant d'afficher
+  document.getElementById("progress-fill").style.width = "0%";
+  document.getElementById("progress-fill").textContent = "";
+  document.getElementById("progress-text").textContent = "0%";
 
   document.getElementById("categories-section").style.display = "none";
   document.getElementById("progress-section").style.display = "block";
-
   // Réinitialiser les logs
   const logsContent = document.getElementById("download-logs-content");
   logsContent.innerHTML = "";
 
-  let totalFiles = 0;
-  selectedCategories.forEach((data) => (totalFiles += data.files.length));
-
-  let completed = 0;
-  let errors = [];
-
+  // Construire la liste de toutes les tâches
+  const tasks = [];
   for (const [categoryLabel, data] of selectedCategories) {
     for (const file of data.files) {
-      let newFilename = buildFileName(data.pattern, file.champs_values, file);
-      const extension = file.filename.match(/\.[^.]+$/)?.[0] || "";
-      newFilename = sanitizeFilename(newFilename) + extension;
+      tasks.push({ file, data });
+    }
+  }
 
-      try {
-        const response = await fetch("/api/download-file", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: file.url, use_proxy: useProxy }),
-        });
+  const totalFiles = tasks.length;
+  let completed = 0;
+  let errorCount = 0;
 
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  // Verrou en mémoire pour éviter les collisions de noms entre téléchargements parallèles
+  const reservedFilenames = new Set();
 
-        const blob = await response.blob();
+  async function downloadOne({ file, data }) {
+    let newFilename = buildFileName(data.pattern, file.champs_values, file);
+    const extension = file.filename.match(/\.[^.]+$/)?.[0] || "";
+    newFilename = sanitizeFilename(newFilename) + extension;
 
-        let finalFilename = newFilename;
-        let counter = 1;
-        while (true) {
+    try {
+      const response = await fetch("/api/download-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: file.url, use_proxy: useProxy }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const blob = await response.blob();
+
+      // Résolution du nom unique : vérifier en mémoire + sur disque
+      let finalFilename = newFilename;
+      let counter = 1;
+      while (
+        reservedFilenames.has(finalFilename) ||
+        (await (async () => {
           try {
             await selectedFolder.getFileHandle(finalFilename, {
               create: false,
             });
-            const namePart = newFilename.replace(extension, "");
-            finalFilename = `${namePart}_${counter}${extension}`;
-            counter++;
-          } catch (e) {
-            break;
+            return true;
+          } catch {
+            return false;
           }
-        }
-
-        const fileHandle = await selectedFolder.getFileHandle(finalFilename, {
-          create: true,
-        });
-        const writable = await fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-
-        completed++;
-
-        // Log succès
-        addDownloadLog(file.dossier_number, finalFilename, "success");
-      } catch (error) {
-        console.error("Erreur:", error);
-        errors.push({
-          filename: file.filename,
-          dossier: file.dossier_number,
-          error: error.message,
-        });
-
-        // Log erreur
-        addDownloadLog(
-          file.dossier_number,
-          newFilename,
-          "error",
-          error.message,
-        );
+        })())
+      ) {
+        const namePart = newFilename.replace(extension, "");
+        finalFilename = `${namePart}_${counter}${extension}`;
+        counter++;
       }
+      reservedFilenames.add(finalFilename);
 
-      updateProgress(completed + errors.length, totalFiles);
+      const fileHandle = await selectedFolder.getFileHandle(finalFilename, {
+        create: true,
+      });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+
+      reservedFilenames.delete(finalFilename);
+      completed++;
+      addDownloadLog(file.dossier_number, finalFilename, "success");
+    } catch (error) {
+      console.error("Erreur:", error);
+      errorCount++;
+      addDownloadLog(file.dossier_number, newFilename, "error", error.message);
+    }
+
+    updateProgress(completed + errorCount, totalFiles);
+  }
+
+  // Pool de concurrence : max CONCURRENCY téléchargements en parallèle
+  const pool = new Set();
+  for (const task of tasks) {
+    const p = downloadOne(task).finally(() => pool.delete(p));
+    pool.add(p);
+    if (pool.size >= CONCURRENCY) {
+      await Promise.race(pool);
     }
   }
+  // Attendre la fin des derniers téléchargements
+  await Promise.allSettled(pool);
 
   const progressSection = document.getElementById("progress-section");
   const downloadComplete = document.getElementById("download-complete");
 
-  if (errors.length > 0) {
+  if (errorCount > 0) {
     document.getElementById("progress-text").innerHTML =
-      `⚠️ ${completed} fichier(s) téléchargé(s), ${errors.length} erreur(s)`;
+      `⚠️ ${completed} fichier(s) téléchargé(s), ${errorCount} erreur(s)`;
   } else {
     document.getElementById("progress-text").innerHTML =
       `🎉 ${completed} fichier(s) téléchargé(s) dans ${selectedFolder.name}`;
@@ -797,6 +816,14 @@ function resetForNewDownload() {
   document.getElementById("categories-summary").style.display = "none";
   document.getElementById("progress-section").style.display = "none";
   document.getElementById("download-complete").style.display = "none";
+
+  // Remettre la barre à zéro
+  document.getElementById("progress-fill").style.width = "0%";
+  document.getElementById("progress-fill").textContent = "";
+  document.getElementById("progress-text").textContent = "";
+  document.getElementById("download-logs-content").innerHTML = "";
+  document.querySelector("#progress-section .fr-h3").textContent =
+    "Téléchargement en cours...";
 
   document.getElementById("categories-section").style.display = "block";
 
