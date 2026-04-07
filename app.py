@@ -1,10 +1,17 @@
-from flask import Flask, render_template, request, jsonify
-import requests
-from pathlib import Path
-import re
-import webbrowser  
-from threading import Timer
+import json
+import logging
 import os
+import re
+import sys
+import webbrowser
+from pathlib import Path
+from threading import Timer
+
+import requests
+import urllib3
+from flask import Flask, jsonify, render_template, request
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Import pour le proxy RIE (optionnel)
 try:
@@ -16,20 +23,43 @@ except ImportError:
     print("⚠️ pypac non installé - Le proxy RIE ne sera pas disponible")
 
 # Désactiver le cache de tldextract pour PyInstaller
-import os
 os.environ['TLDEXTRACT_CACHE'] = 'no'
+
+# --- Chargement de la configuration externe ---
+def get_app_dir():
+    """Retourne le dossier contenant l'exe (PyInstaller) ou le script (dev)"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+def load_config():
+    config_path = get_app_dir() / "config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+            print(f"✅ config.json chargé depuis {config_path}")
+            return data
+        except Exception as e:
+            print(f"⚠️ Erreur lecture config.json : {e}")
+    else:
+        print(f"ℹ️ config.json absent — proxy désactivé par défaut")
+    return {}
+
+CONFIG = load_config()
 
 # Variables globales de cache
 _cached_session = None
 _cached_use_proxy = None
 _cached_token = None
+_ssl_verify = True
 
 app = Flask(__name__, 
             static_folder='static',
             template_folder='templates')
 
 DS_API_URL = "https://demarche.numerique.gouv.fr/api/v2/graphql"
-PAC_URL = "http://conf.proxy.national.agri/?sf"
+PAC_URL = CONFIG.get("pac_urls", [""])[0]
 DOWNLOAD_FOLDER = Path("./downloads")
 
 def get_session(token=None, use_proxy=False):
@@ -55,10 +85,7 @@ def get_session(token=None, use_proxy=False):
     
     if use_proxy and PYPAC_AVAILABLE:
         # Liste des URLs PAC à tester
-        PAC_URLS = [
-            "http://conf.proxy.national.agri/?sf",  # RIE Agriculture national
-            "http://configate.interieur.rie.gouv.fr:8888/config-ATE-DDT.pl" # Proxy DDT
-        ]
+        PAC_URLS = CONFIG.get("pac_urls", [])
         
         session = None
         for pac_url in PAC_URLS:
@@ -70,7 +97,7 @@ def get_session(token=None, use_proxy=False):
                 resolver = ProxyResolver(pac=pac)
                 
                 # Vérifier les proxies configurés
-                proxies = resolver.get_proxy_for_requests('https://www.demarches-simplifiees.fr')
+                proxies = resolver.get_proxy_for_requests(CONFIG.get("pac_test_url", "https://demarche.numerique.gouv.fr"))
                 print(f"  📋 Proxies détectés: {proxies}")
                 
                 # Si pas de proxy configuré (DIRECT), on skip
@@ -83,7 +110,7 @@ def get_session(token=None, use_proxy=False):
                 
                 # TEST RÉEL de connectivité
                 print(f"  🌐 Test de connexion via proxy...")
-                test_response = test_session.get('https://www.demarches-simplifiees.fr', timeout=5)
+                test_response = test_session.get(CONFIG.get("pac_test_url", "https://demarche.numerique.gouv.fr"), timeout=5)
                 test_response.raise_for_status()
                 
                 print(f"✅ Proxy {pac_url} fonctionnel ! (HTTP {test_response.status_code})")
@@ -661,6 +688,11 @@ def get_dossiers_with_pj(demarche_number, token, use_proxy=False, date_debut=Non
     
     return all_dossiers
 
+@app.route('/api/stats')
+def stats_sink():
+    """Route muette pour absorber les polls externes"""
+    return jsonify({}), 200
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -867,15 +899,22 @@ def download_file_proxy():
         return jsonify({'error': 'URL manquante'}), 400
     
     try:
-        # Créer une session SANS token pour les fichiers
+        # Session fraîche dédiée — jamais la session GraphQL partagée
         if use_proxy and PYPAC_AVAILABLE:
-            pac = get_pac(url="http://conf.proxy.national.agri/?sf")
+            pac = get_pac(url=PAC_URL)
             resolver = ProxyResolver(pac=pac)
             session = PACSession(proxy_resolver=resolver)
         else:
             session = requests.Session()
+
+        global _ssl_verify
+        try:
+            response = session.get(url, timeout=60, verify=_ssl_verify)
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
+            print("⚠️ Connexion échouée, retry avec verify=False (mémorisé)")
+            _ssl_verify = False
+            response = session.get(url, timeout=60, verify=False)
         
-        response = session.get(url, timeout=30)
         response.raise_for_status()
         session.close()
         
@@ -893,8 +932,9 @@ def download_file_proxy():
 def quit_app():
     """Ferme proprement l'application"""
     def shutdown():
-        import signal
         import os
+        import signal
+
         # Tuer proprement le processus Flask
         os.kill(os.getpid(), signal.SIGTERM)
     
@@ -906,9 +946,9 @@ if __name__ == '__main__':
     DOWNLOAD_FOLDER.mkdir(exist_ok=True)
     
     def open_browser():
-        import subprocess
         import os
-        
+        import subprocess
+
         # Chemins possibles pour Chrome
         chrome_paths = [
             r'C:\Program Files\Google\Chrome\Application\chrome.exe',

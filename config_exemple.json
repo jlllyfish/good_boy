@@ -1,0 +1,9 @@
+{
+  "_commentaire": "Configuration Good Boy ! — à placer dans le même dossier que l'exe",
+
+  "ds_api_url": "https://demarche.numerique.gouv.fr/api/v2/graphql",
+
+  "pac_urls": ["http://xxxx"],
+
+  "pac_test_url": "https://demarche.numerique.gouv.fr"
+}
