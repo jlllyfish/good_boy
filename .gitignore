@@ -20,9 +20,6 @@ wheels/
 .installed.cfg
 *.egg
 
-# PyInstaller
-*.spec
-
 # Environnements virtuels
 venv/
 ENV/
@@ -39,10 +36,11 @@ env/
 Thumbs.db
 
 # App spécifique
-downloads/
 *.log
+*.log.1
 .env
 
-# Tokens sensibles
+# Config locale et tokens sensibles
+config.json
 config.ini
 secrets.json

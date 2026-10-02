@@ -154,6 +154,12 @@
                 <h3 class="fr-callout__title" id="demarche-title"></h3>
                 <p class="fr-callout__text" id="demarche-count"></p>
               </div>
+
+              <div
+                id="load-error"
+                class="fr-alert fr-alert--error fr-mt-3w"
+                style="display: none"
+              ></div>
             </div>
           </div>
         </section>
@@ -284,7 +290,16 @@
         <section id="progress-section" class="fr-mb-6w" style="display: none">
           <div class="fr-grid-row">
             <div class="fr-col-12">
-              <h2 class="fr-h3">Téléchargement en cours...</h2>
+              <div class="progress-header">
+                <h2 class="fr-h3">Téléchargement en cours...</h2>
+                <img
+                  id="download-loader"
+                  class="download-loader"
+                  src="{{ url_for('static', filename='goodboy_loader.webp') }}"
+                  alt=""
+                  aria-hidden="true"
+                />
+              </div>
               <div class="progress-bar fr-mt-3w">
                 <div class="progress-fill" id="progress-fill"></div>
               </div>
@@ -419,6 +434,9 @@
                 >Données personnelles</a
               >
             </li>
+            <li class="fr-footer__bottom-item">
+              <span class="fr-footer__bottom-link">v.{{ app_version }}</span>
+            </li>
           </ul>
           <div class="fr-footer__bottom-copy">
             <p>
@@ -435,7 +453,6 @@
       </div>
     </footer>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script
       type="module"
       src="{{ url_for('static', filename='dsfr/js/dsfr.module.min.js') }}"

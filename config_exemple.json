@@ -5,5 +5,7 @@
 
   "pac_urls": ["http://xxxx"],
 
+  "proxy_urls": ["http://hote:port"],
+
   "pac_test_url": "https://demarche.numerique.gouv.fr"
 }

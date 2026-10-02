@@ -68,11 +68,13 @@ Le fichier `config.json` doit être placé dans le même dossier que `Good_Boy.e
   "ds_api_url": "https://demarche.numerique.gouv.fr/api/v2/graphql",
 
   "pac_urls": [
-    "http:/xxxx",
+    "http://xxxx",
     "http://xxxx"
   ],
 
-  "pac_test_url": "https://www.demarches-simplifiees.fr"
+  "proxy_urls": ["http://hote:port"],
+
+  "pac_test_url": "https://demarche.numerique.gouv.fr"
 }
 ```
 
@@ -80,7 +82,10 @@ Le fichier `config.json` doit être placé dans le même dossier que `Good_Boy.e
 
 - `ds_api_url` : URL de l'API Démarches Simplifiées (ne pas modifier sauf changement officiel)
 - `pac_urls` : liste des URLs de fichiers PAC à tester pour la configuration proxy, dans l'ordre de priorité. L'application teste chaque URL jusqu'à trouver un proxy fonctionnel.
+- `proxy_urls` (optionnel) : proxys directs `http://hote:port`, testés après les fichiers PAC
 - `pac_test_url` : URL utilisée pour vérifier la connectivité via le proxy
+
+Ordre de connexion quand le proxy est coché : fichiers PAC → proxys directs → connexion directe.
 
 Si `config.json` est absent, le proxy est désactivé et l'application fonctionne en connexion directe.
 
@@ -92,7 +97,13 @@ Si `config.json` est absent, le proxy est désactivé et l'application fonctionn
 
 ### Token API
 
-Obtenez votre token sur https://www.demarches-simplifiees.fr/profil
+Obtenez votre token sur https://demarche.numerique.gouv.fr/profil
+
+Les jetons créés depuis le 1er juillet 2026 sont restreints par adresse IP. En cas d'erreur 403, l'application affiche l'adresse IP à ajouter dans les réseaux autorisés du jeton (avec le proxy, c'est l'IP de sortie du proxy).
+
+### Journal
+
+L'exécutable n'a pas de console : les messages et erreurs sont écrits dans `Good_Boy.log`, à côté de l'exe (ou dans le dossier temporaire si ce dossier n'est pas accessible en écriture). À demander en cas de problème chez un utilisateur.
 
 ## 🔒 Sécurité
 

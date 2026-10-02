@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import logging
 import os
 import sys
 import webbrowser
@@ -26,6 +27,33 @@ except ImportError:
 # Désactiver le cache de tldextract pour PyInstaller
 os.environ["TLDEXTRACT_CACHE"] = "no"
 
+# --- Journal : indispensable avec l'exe sans console (console=False) ---
+LOG_MAX_BYTES = 1_000_000
+
+
+def setup_log_file():
+    """Sans console, redirige print() et les tracebacks vers Good_Boy.log."""
+    if sys.stdout is not None:  # mode dev : on garde la console
+        return
+    import tempfile
+    from datetime import datetime
+
+    for folder in (get_app_dir(), Path(tempfile.gettempdir())):
+        try:
+            log_path = folder / "Good_Boy.log"
+            if log_path.exists() and log_path.stat().st_size > LOG_MAX_BYTES:
+                log_path.replace(log_path.with_suffix(".log.1"))  # garde une archive
+            log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+            sys.stdout = sys.stderr = log_file
+            print(f"\n===== Démarrage {datetime.now():%Y-%m-%d %H:%M:%S} =====")
+            return
+        except OSError:
+            continue  # dossier non accessible en écriture : on tente le dossier temporaire
+
+
+# Une ligne par requête HTTP locale noierait le journal
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
 
 # --- Chargement de la configuration externe ---
 def get_app_dir():
@@ -50,6 +78,7 @@ def load_config():
     return {}
 
 
+setup_log_file()
 CONFIG = load_config()
 
 # Variables globales de cache
@@ -67,9 +96,55 @@ CHUNK_SIZE = 256 * 1024  # 256 Ko
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
-DS_API_URL = "https://demarche.numerique.gouv.fr/api/v2/graphql"
-PAC_URL = CONFIG.get("pac_urls", [""])[0]
-DOWNLOAD_FOLDER = Path("./downloads")
+APP_VERSION = "0.9"
+
+
+@app.context_processor
+def inject_version():
+    """Rend la version disponible dans tous les templates."""
+    return {"app_version": APP_VERSION}
+
+
+DEFAULT_DS_API_URL = "https://demarche.numerique.gouv.fr/api/v2/graphql"
+DS_API_URL = CONFIG.get("ds_api_url") or DEFAULT_DS_API_URL
+PAC_URL = (CONFIG.get("pac_urls") or [""])[0]
+
+
+def _send(session, method, url, **kwargs):
+    """Requête HTTP avec bascule SSL contrôlée.
+
+    - Erreur SSL (inspection EDR/antivirus) : vérification désactivée pour la suite.
+    - Autre erreur de connexion : on réessaie d'abord à l'identique (coupure ponctuelle),
+      et on ne désactive la vérification que si seule la requête non vérifiée passe.
+    - Timeout : remonté tel quel (pas de triple attente).
+    """
+    global _ssl_verify
+    try:
+        return session.request(method, url, verify=_ssl_verify, **kwargs)
+    except requests.exceptions.SSLError:
+        if not _ssl_verify:
+            raise
+        print(
+            "⚠️ Erreur SSL (inspection réseau ?) → vérification SSL désactivée pour ce poste"
+        )
+        _ssl_verify = False
+        return session.request(method, url, verify=False, **kwargs)
+    except requests.exceptions.Timeout:
+        raise
+    except requests.exceptions.ConnectionError:
+        if not _ssl_verify:
+            raise
+        try:
+            return session.request(method, url, verify=True, **kwargs)
+        except requests.exceptions.Timeout:
+            raise
+        except requests.exceptions.ConnectionError:
+            response = session.request(method, url, verify=False, **kwargs)
+            print(
+                "⚠️ Connexion possible uniquement sans vérification SSL → désactivée pour ce poste"
+            )
+            _ssl_verify = False
+            return response
 
 
 def _build_base_session(use_proxy=False):
@@ -91,12 +166,25 @@ def _build_base_session(use_proxy=False):
                     print("  ⚠️ PAC indique DIRECT (pas de proxy) - Skip")
                     continue
                 test_session = PACSession(proxy_resolver=resolver)
-                test_session.get(test_url, timeout=5).raise_for_status()
+                _send(test_session, "GET", test_url, timeout=5).raise_for_status()
                 print(f"✅ Proxy {pac_url} fonctionnel !")
                 return test_session
             except Exception as e:
                 print(f"❌ Proxy {pac_url} non fonctionnel: {e}")
-        print("⚠️ Aucun proxy PAC fonctionnel - Connexion directe")
+
+        # Proxys directs (http://hote:port), testés après les PAC
+        for proxy_url in CONFIG.get("proxy_urls", []):
+            try:
+                print(f"🔍 Test proxy direct: {proxy_url}")
+                test_session = requests.Session()
+                test_session.proxies = {"http": proxy_url, "https": proxy_url}
+                _send(test_session, "GET", test_url, timeout=5).raise_for_status()
+                print(f"✅ Proxy direct {proxy_url} fonctionnel !")
+                return test_session
+            except Exception as e:
+                print(f"❌ Proxy direct {proxy_url} non fonctionnel: {e}")
+
+        print("⚠️ Aucun proxy fonctionnel - Connexion directe")
     else:
         print("ℹ️ Connexion directe (pas de proxy)")
     return requests.Session()
@@ -151,10 +239,12 @@ def get_session(token=None, use_proxy=False):
 
 def is_on_rie():
     """Détecte si l'utilisateur est sur le RIE en testant l'accès au proxy PAC"""
+    if not PAC_URL:
+        return False
     try:
         response = requests.get(PAC_URL, timeout=2)
         return response.status_code == 200
-    except:
+    except requests.exceptions.RequestException:
         return False
 
 
@@ -183,34 +273,30 @@ def get_public_ips(session):
     return found
 
 
+class IpNotAllowedError(Exception):
+    """403 DN : IP non autorisée pour le jeton. Porte les réseaux à ajouter."""
+
+    def __init__(self, message, networks, via_proxy):
+        super().__init__(message)
+        self.networks = networks
+        self.via_proxy = via_proxy
+
+
 def build_ip_hint(session, use_proxy):
-    """Message d'aide affiché quand DN refuse le token (403)."""
+    """Détecte les réseaux à autoriser et construit l'exception à remonter."""
     ips = get_public_ips(session)
-    lines = [
+    networks = []
+    if "IPv4" in ips:
+        networks.append(f"{ips['IPv4']}/32")
+    if "IPv6" in ips:
+        # Les adresses IPv6 changent souvent : on autorise tout le /64 du poste
+        networks.append(str(ipaddress.ip_network(f"{ips['IPv6']}/64", strict=False)))
+    message = (
         "Accès refusé par Démarche Numérique (403) : l'adresse IP de ce poste "
         "n'est probablement pas autorisée pour ce jeton."
-    ]
-    if ips:
-        lines.append(
-            "Ajoutez dans les réseaux autorisés du jeton (Profil DN > jeton > Modifier) :"
-        )
-        if "IPv4" in ips:
-            lines.append(f"  • {ips['IPv4']}/32")
-        if "IPv6" in ips:
-            # Les adresses IPv6 changent souvent : on autorise tout le /64 du poste
-            net6 = ipaddress.ip_network(f"{ips['IPv6']}/64", strict=False)
-            lines.append(f"  • {net6}  (IPv6)")
-        if use_proxy:
-            lines.append(
-                "Via le proxy, c'est l'IP de sortie du proxy qui est vue par DN : "
-                "elle peut être partagée et changer selon le site."
-            )
-    else:
-        lines.append(
-            "Impossible de déterminer l'IP publique automatiquement : "
-            "consultez https://api.ipify.org depuis ce poste."
-        )
-    return "\n".join(lines)
+    )
+    print(f"⚠️ {message} Réseaux détectés : {networks or 'aucun'}")
+    return IpNotAllowedError(message, networks, use_proxy)
 
 
 def graphql_query(query, variables=None, token=None, use_proxy=False):
@@ -229,8 +315,12 @@ def graphql_query(query, variables=None, token=None, use_proxy=False):
             f"[DEBUG] Proxies configurés: {session.proxies if hasattr(session, 'proxies') else 'Session PACSession'}"
         )
 
-        response = session.post(
-            DS_API_URL, json={"query": query, "variables": variables}, timeout=30
+        response = _send(
+            session,
+            "POST",
+            DS_API_URL,
+            json={"query": query, "variables": variables},
+            timeout=30,
         )
 
         print(f"[DEBUG] Status code reçu: {response.status_code}")
@@ -249,7 +339,7 @@ def graphql_query(query, variables=None, token=None, use_proxy=False):
     except requests.exceptions.HTTPError as e:
         print(f"[ERROR] HTTPError {response.status_code}: {e}")
         if response.status_code == 403:
-            raise Exception(build_ip_hint(session, use_proxy)) from e
+            raise build_ip_hint(session, use_proxy) from e
         raise Exception(f"Erreur HTTP {response.status_code}: {e!s}")
     except ValueError as e:
         print(f"[ERROR] ValueError (JSON invalide): {e}")
@@ -413,9 +503,7 @@ def extract_all_champs_values(champs):
     return champs_values
 
 
-def get_dossiers_with_pj(
-    demarche_number, token, use_proxy=False, date_debut=None, date_fin=None
-):
+def get_dossiers_with_pj(demarche_number, token, use_proxy=False):
     """Récupère les dossiers avec leurs PJ et TOUS les champs"""
     query = """
     query getDossiers($demarcheNumber: Int!, $after: String) {
@@ -726,39 +814,17 @@ def get_dossiers_with_pj(
         has_next = page_info.get("hasNextPage", False)
         cursor = page_info.get("endCursor")
 
-    # Filtrer par dates de dépôt si demandé
-    if date_debut or date_fin:
-        from datetime import datetime
-
-        filtered_dossiers = []
-
-        for dossier in all_dossiers:
-            date_depot = dossier.get("dateDepot")
-            if not date_depot:
-                continue
-
-            try:
-                depot_date = datetime.fromisoformat(
-                    date_depot.replace("Z", "+00:00")
-                ).date()
-            except:
-                continue
-
-            if date_debut:
-                debut = datetime.fromisoformat(date_debut).date()
-                if depot_date < debut:
-                    continue
-
-            if date_fin:
-                fin = datetime.fromisoformat(date_fin).date()
-                if depot_date > fin:
-                    continue
-
-            filtered_dossiers.append(dossier)
-
-        return filtered_dossiers
-
     return all_dossiers
+
+
+def ip_error_response(e):
+    return jsonify(
+        {
+            "error": str(e),
+            "allowed_networks": e.networks,
+            "via_proxy": e.via_proxy,
+        }
+    ), 403
 
 
 @app.route("/api/stats")
@@ -831,6 +897,8 @@ def demarche_info(demarche_number):
             return jsonify({"error": "Démarche introuvable ou accès refusé"}), 404
 
         return jsonify(result["data"]["demarche"])
+    except IpNotAllowedError as e:
+        return ip_error_response(e)
     except Exception as e:
         error_msg = str(e)
 
@@ -854,16 +922,12 @@ def dossiers_list(demarche_number):
     data = request.json
     token = data.get("token")
     use_proxy = data.get("use_proxy", False)
-    date_debut = data.get("date_debut")  # AJOUTE
-    date_fin = data.get("date_fin")  # AJOUTE
 
     if not token:
         return jsonify({"error": "Token manquant"}), 400
 
     try:
-        dossiers = get_dossiers_with_pj(
-            demarche_number, token, use_proxy, date_debut, date_fin
-        )  # MODIFIE
+        dossiers = get_dossiers_with_pj(demarche_number, token, use_proxy)
 
         if not dossiers:
             return jsonify([])
@@ -969,6 +1033,8 @@ def dossiers_list(demarche_number):
                 continue
 
         return jsonify(formatted)
+    except IpNotAllowedError as e:
+        return ip_error_response(e)
     except Exception as e:
         print(f"Erreur globale dans dossiers_list: {e!s}")
         import traceback
@@ -994,7 +1060,6 @@ def dossiers_list(demarche_number):
 @app.route("/api/download-file", methods=["POST"])
 def download_file_proxy():
     """Télécharge un fichier depuis DS et le relaie en streaming au navigateur"""
-    global _ssl_verify
     data = request.json
     url = data.get("url")
     use_proxy = data.get("use_proxy", False)
@@ -1004,14 +1069,7 @@ def download_file_proxy():
 
     try:
         session = get_file_session(use_proxy)
-        try:
-            upstream = session.get(
-                url, timeout=(10, 120), stream=True, verify=_ssl_verify
-            )
-        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
-            print("⚠️ Connexion échouée, retry avec verify=False (mémorisé)")
-            _ssl_verify = False
-            upstream = session.get(url, timeout=(10, 120), stream=True, verify=False)
+        upstream = _send(session, "GET", url, timeout=(10, 120), stream=True)
 
         if not upstream.ok:
             status = upstream.status_code
@@ -1052,7 +1110,6 @@ def quit_app():
     """Ferme proprement l'application"""
 
     def shutdown():
-        import os
         import signal
 
         # Tuer proprement le processus Flask
@@ -1064,10 +1121,8 @@ def quit_app():
 
 
 if __name__ == "__main__":
-    DOWNLOAD_FOLDER.mkdir(exist_ok=True)
 
     def open_browser():
-        import os
         import subprocess
 
         # Chemins possibles pour Chrome

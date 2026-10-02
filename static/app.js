@@ -4,6 +4,53 @@ let selectedFields = [];
 let selectedCategories = new Map();
 let selectedFolder = null;
 let apiToken = null;
+let allDossiersData = []; // tous les dossiers chargés (avant filtre de dates)
+let categoryLabels = []; // index -> libellé de catégorie
+const fieldKeys = {}; // index -> clé de champ
+const DEFAULT_PATTERN = "{numero}-{nom original du fichier}";
+const MAX_BASENAME_LENGTH = 150; // marge pour le chemin complet sous Windows
+
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Même règle que l'ancien filtre serveur : on compare la partie date (AAAA-MM-JJ)
+// de dateDepot ; les dossiers sans date de dépôt sont exclus
+function filterByDepotDate(dossiers, dateDebut, dateFin) {
+  return dossiers.filter((d) => {
+    const depot = (d.champs_values?.dateDepot || "").slice(0, 10);
+    if (!depot) return false;
+    if (dateDebut && depot < dateDebut) return false;
+    if (dateFin && depot > dateFin) return false;
+    return true;
+  });
+}
+
+function regField(index, key) {
+  fieldKeys[index] = key;
+  return index;
+}
+
+// Nom de base sûr pour Windows : longueur limitée, pas de point/espace final,
+// pas de nom réservé (CON, NUL, COM1...)
+function safeBaseName(name) {
+  let base = String(name)
+    .slice(0, MAX_BASENAME_LENGTH)
+    .replace(/[. ]+$/, "");
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(base)) base = "_" + base;
+  return base || "vide";
+}
+
+function finalBaseName(pattern, pj) {
+  return safeBaseName(
+    sanitizeFilename(buildFileName(pattern, pj.champs_values, pj)),
+  );
+}
 
 function isProblematicDescriptor(descriptor) {
   const problematicTypenames = [
@@ -55,6 +102,115 @@ async function selectFolder() {
   }
 }
 
+// Transforme une réponse d'erreur du serveur en Error enrichie
+async function apiError(response, fallback) {
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {}
+  const error = new Error(data.error || fallback);
+  error.allowedNetworks = data.allowed_networks;
+  error.viaProxy = data.via_proxy;
+  return error;
+}
+
+// Encadré d'erreur : créé à la volée s'il manque dans index.html
+function getLoadErrorBox() {
+  let box = document.getElementById("load-error");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "load-error";
+    box.className = "fr-alert fr-alert--error fr-mt-3w";
+    box.style.display = "none";
+    document.getElementById("demarche-info").after(box);
+  }
+  return box;
+}
+
+function hideLoadError() {
+  const box = getLoadErrorBox();
+  box.style.display = "none";
+  box.innerHTML = "";
+}
+
+// Erreur affichée dans la page (texte sélectionnable), avec boutons
+// « Copier » pour les réseaux à autoriser en cas de 403
+function showLoadError(error) {
+  const box = getLoadErrorBox();
+  box.innerHTML = "";
+
+  const title = document.createElement("h3");
+  title.className = "fr-alert__title";
+  const text = document.createElement("p");
+
+  if (error.allowedNetworks !== undefined) {
+    title.textContent = "Adresse IP non autorisée pour ce jeton";
+    box.append(title);
+
+    if (error.allowedNetworks.length) {
+      text.textContent =
+        "Ajoutez ce(s) réseau(x) dans les réseaux autorisés du jeton (Profil DN > jeton > Modifier) :";
+      box.append(text);
+
+      const list = document.createElement("ul");
+      list.className = "ip-list";
+      error.allowedNetworks.forEach((net) => {
+        const li = document.createElement("li");
+        const code = document.createElement("code");
+        code.textContent = net;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fr-btn fr-btn--tertiary fr-btn--sm";
+        btn.textContent = "Copier";
+        btn.addEventListener("click", () => copyText(net, btn));
+        li.append(code, btn);
+        list.append(li);
+      });
+      box.append(list);
+    } else {
+      text.innerHTML =
+        'Impossible de détecter l\'IP automatiquement : ouvrez <a href="https://api.ipify.org" target="_blank" rel="noopener noreferrer">api.ipify.org</a> depuis ce poste.';
+      box.append(text);
+    }
+
+    if (error.viaProxy) {
+      const note = document.createElement("p");
+      note.className = "fr-text--sm";
+      note.textContent =
+        "Via le proxy, c'est l'IP de sortie du proxy qui est vue par DN : elle peut être partagée et changer selon le site.";
+      box.append(note);
+    }
+
+    const link = document.createElement("p");
+    link.innerHTML =
+      '<a href="https://demarche.numerique.gouv.fr/profil" target="_blank" rel="noopener noreferrer">Ouvrir mon profil DN</a>';
+    box.append(link);
+  } else {
+    title.textContent = "Erreur";
+    text.textContent = error.message;
+    box.append(title, text);
+  }
+
+  box.style.display = "block";
+}
+
+async function copyText(value, btn) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    // Repli si le presse-papier est refusé
+    const tmp = document.createElement("textarea");
+    tmp.value = value;
+    document.body.append(tmp);
+    tmp.select();
+    document.execCommand("copy");
+    tmp.remove();
+  }
+  const label = btn.textContent;
+  btn.textContent = "Copié ✓";
+  setTimeout(() => (btn.textContent = label), 1500);
+}
+
 async function loadDemarche() {
   const token = document.getElementById("api-token").value.trim();
   const demarcheNumber = document.getElementById("demarche-number").value;
@@ -71,6 +227,7 @@ async function loadDemarche() {
   }
 
   apiToken = token;
+  hideLoadError();
 
   const spinner = document.getElementById("loading-spinner");
   const loadBtn = document.getElementById("load-demarche");
@@ -85,10 +242,7 @@ async function loadDemarche() {
       body: JSON.stringify({ token: apiToken, use_proxy: useProxy }),
     });
 
-    if (!infoRes.ok) {
-      const error = await infoRes.json();
-      throw new Error(error.error || "Erreur lors du chargement");
-    }
+    if (!infoRes.ok) throw await apiError(infoRes, "Erreur lors du chargement");
 
     demarcheData = await infoRes.json();
 
@@ -101,12 +255,14 @@ async function loadDemarche() {
       },
     );
 
-    if (!dossiersRes.ok) {
-      const error = await dossiersRes.json();
-      throw new Error(error.error || "Erreur lors du chargement des dossiers");
-    }
+    if (!dossiersRes.ok)
+      throw await apiError(
+        dossiersRes,
+        "Erreur lors du chargement des dossiers",
+      );
 
     dossiersData = await dossiersRes.json();
+    allDossiersData = dossiersData;
 
     document.getElementById("demarche-title").textContent = demarcheData.title;
     document.getElementById("demarche-count").textContent = `${
@@ -117,7 +273,7 @@ async function loadDemarche() {
     showFieldsSelection();
   } catch (error) {
     console.error("Erreur:", error);
-    alert("Erreur: " + error.message);
+    showLoadError(error);
   } finally {
     spinner.style.display = "none";
     loadBtn.disabled = false;
@@ -169,19 +325,19 @@ function showFieldsSelection() {
       <div class="field-category-title">📋 Système</div>
       <div class="fields-grid">
         <div class="field-checkbox-item">
-          <input type="checkbox" id="field-sys-numero" value="numero" onchange="toggleField('numero', 0)">
+          <input type="checkbox" id="field-sys-numero" value="numero" onchange="toggleField(${regField(0, "numero")})">
           <label for="field-sys-numero">Numéro du dossier</label>
         </div>
         <div class="field-checkbox-item">
-          <input type="checkbox" id="field-sys-state" value="state" onchange="toggleField('state', 1)">
+          <input type="checkbox" id="field-sys-state" value="state" onchange="toggleField(${regField(1, "state")})">
           <label for="field-sys-state">État du dossier</label>
         </div>
         <div class="field-checkbox-item">
-          <input type="checkbox" id="field-sys-dateDepot" value="dateDepot" onchange="toggleField('dateDepot', 2)">
+          <input type="checkbox" id="field-sys-dateDepot" value="dateDepot" onchange="toggleField(${regField(2, "dateDepot")})">
           <label for="field-sys-dateDepot">Date de dépôt</label>
         </div>
         <div class="field-checkbox-item">
-          <input type="checkbox" id="field-sys-nom-original" value="nom original du fichier" onchange="toggleField('nom original du fichier', 3)">
+          <input type="checkbox" id="field-sys-nom-original" value="nom original du fichier" onchange="toggleField(${regField(3, "nom original du fichier")})">
           <label for="field-sys-nom-original">Nom original du fichier</label>
         </div>
       </div>
@@ -207,7 +363,7 @@ function showFieldsSelection() {
     <div class="field-checkbox-item">
       <input type="checkbox" id="field-physique-${f.key}" value="${
         f.key
-      }" onchange="toggleField('${f.key}', ${100 + idx})">
+      }" onchange="toggleField(${regField(100 + idx, f.key)})">
       <label for="field-physique-${f.key}">${f.label}</label>
     </div>
   `,
@@ -247,7 +403,7 @@ function showFieldsSelection() {
     <div class="field-checkbox-item">
       <input type="checkbox" id="field-morale-${f.key}" value="${
         f.key
-      }" onchange="toggleField('${f.key}', ${200 + idx})">
+      }" onchange="toggleField(${regField(200 + idx, f.key)})">
       <label for="field-morale-${f.key}">${f.label}</label>
     </div>
   `,
@@ -288,17 +444,16 @@ function showFieldsSelection() {
       sections.forEach((section) => {
         html += `
         <div class="field-category">
-          <div class="field-category-title">📝 ${section.title}</div>
+          <div class="field-category-title">📝 ${escapeHtml(section.title)}</div>
           <div class="fields-grid">
       `;
 
         section.fields.forEach((fieldLabel) => {
           const safeId = "field-form-" + fieldIndex;
-          const safeLabel = fieldLabel.replace(/'/g, "\\'");
           html += `
           <div class="field-checkbox-item">
-            <input type="checkbox" id="${safeId}" value="${safeLabel}" onchange="toggleField('${safeLabel}', ${fieldIndex})">
-            <label for="${safeId}">${fieldLabel}</label>
+            <input type="checkbox" id="${safeId}" onchange="toggleField(${regField(fieldIndex, fieldLabel)})">
+            <label for="${safeId}">${escapeHtml(fieldLabel)}</label>
           </div>
         `;
           fieldIndex++;
@@ -335,13 +490,10 @@ function showFieldsSelection() {
     let fieldIndex = 0;
     repetitionFieldNames.forEach((fieldName) => {
       const safeId = "field-rep-" + fieldIndex;
-      const safeLabel = fieldName.replace(/'/g, "\\'");
       html += `
   <div class="field-checkbox-item">
-    <input type="checkbox" id="${safeId}" value="${safeLabel}" onchange="toggleField('${safeLabel}', ${
-      400 + fieldIndex
-    })">
-    <label for="${safeId}">${fieldName}</label>
+    <input type="checkbox" id="${safeId}" onchange="toggleField(${regField(400 + fieldIndex, fieldName)})">
+    <label for="${safeId}">${escapeHtml(fieldName)}</label>
   </div>
 `;
       fieldIndex++;
@@ -355,7 +507,8 @@ function showFieldsSelection() {
   fieldsContainer.innerHTML = html;
 }
 
-function toggleField(key, index) {
+function toggleField(index) {
+  const key = fieldKeys[index];
   const fieldId = `${key}_${index}`;
   const existingIndex = selectedFields.findIndex((f) => f.id === fieldId);
 
@@ -380,7 +533,7 @@ function updateSelectedFieldsPreview() {
     list.innerHTML = selectedFields
       .map(
         (field) =>
-          `<span class="fr-tag fr-tag--sm fr-tag--blue-cumulus selected-field-tag">${field.name}</span>`,
+          `<span class="fr-tag fr-tag--sm fr-tag--blue-cumulus selected-field-tag">${escapeHtml(field.name)}</span>`,
       )
       .join("");
   } else {
@@ -391,6 +544,15 @@ function updateSelectedFieldsPreview() {
 
 function showCategoriesSelection() {
   document.getElementById("categories-section").style.display = "block";
+
+  // Mémoriser la sélection actuelle (motifs compris) pour la réappliquer
+  // aux nouvelles listes de fichiers, puis repartir de zéro : évite de
+  // télécharger les fichiers d'avant le filtre de dates.
+  const previous = new Map();
+  selectedCategories.forEach((data, label) =>
+    previous.set(label, data.pattern),
+  );
+  selectedCategories.clear();
 
   const categoriesMap = new Map();
 
@@ -407,67 +569,46 @@ function showCategoriesSelection() {
     });
   });
 
+  categoryLabels = Array.from(categoriesMap.keys());
   const categoriesList = document.getElementById("pj-categories-list");
 
+  const tagsHtml = (index) =>
+    selectedFields
+      .map(
+        (field, pos) =>
+          `<button type="button" class="fr-tag fr-tag--sm field-tag" onclick="insertFieldInAccordionFromTag(${index}, ${pos})">${escapeHtml(
+            field.name,
+          )}</button>`,
+      )
+      .join("");
+
   let html = "";
-  let index = 0;
-  categoriesMap.forEach((files, label) => {
-    const safeId = "cat-" + index;
-    const accordionId = "accordion-" + index;
+  categoryLabels.forEach((label, index) => {
+    const files = categoriesMap.get(label);
+    const nbDossiers = new Set(files.map((f) => f.dossier_number)).size;
 
     html += `
       <div class="category-item" id="category-item-${index}">
-        <div class="category-header" onclick="toggleCategoryAccordion(event, ${index}, '${label.replace(
-          /'/g,
-          "\\'",
-        )}')">
-          <input type="checkbox" 
-                 class="category-checkbox" 
-                 id="${safeId}" 
-                 data-category-label="${label}"
-                 onchange="handleCheckboxChange(event, ${index}, '${label.replace(
-                   /'/g,
-                   "\\'",
-                 )}')">
+        <div class="category-header" onclick="toggleCategoryAccordion(event, ${index})">
+          <input type="checkbox" class="category-checkbox" id="cat-${index}"
+                 onchange="handleCheckboxChange(event, ${index})">
           <div class="category-info">
-            <div class="category-name">${label}</div>
-            <div class="category-count">${files.length} fichier(s) dans ${
-              new Set(files.map((f) => f.dossier_number)).size
-            } dossier(s)</div>
+            <div class="category-name">${escapeHtml(label)}</div>
+            <div class="category-count">${files.length} fichier(s) dans ${nbDossiers} dossier(s)</div>
           </div>
         </div>
-        
-        <div class="category-accordion-content" id="${accordionId}">
+
+        <div class="category-accordion-content" id="accordion-${index}">
           <div class="category-rename-config">
             <label for="pattern-${index}" class="pattern-label">Renommer le fichier :</label>
-            <input type="text" 
-                   id="pattern-${index}" 
-                   data-category="${label}"
-                   data-index="${index}"
-                   class="pattern-input-full"
-                   value="{numero}-{nom original du fichier}" 
-                   placeholder="Ex: {numero}-{nom original du fichier}"
-                   oninput="updateCategoryPattern(${index}, '${label.replace(
-                     /'/g,
-                     "\\'",
-                   )}')">
-            
+            <input type="text" id="pattern-${index}" class="pattern-input-full"
+                   value="${escapeHtml(previous.get(label) || DEFAULT_PATTERN)}"
+                   placeholder="Ex: ${DEFAULT_PATTERN}"
+                   oninput="updateCategoryPattern(${index})">
+
             <p class="fields-helper-text">Cliquez sur les étiquettes que vous souhaitez intégrer au nom du fichier</p>
-            
-            <div class="fields-tags-container">
-              ${selectedFields
-                .map(
-                  (field) =>
-                    `<button type="button" class="fr-tag fr-tag--sm field-tag" onclick="insertFieldInAccordionFromTag(${index}, '${field.name.replace(
-                      /'/g,
-                      "\\'",
-                    )}', '${label.replace(/'/g, "\\'")}')">${
-                      field.name
-                    }</button>`,
-                )
-                .join("")}
-            </div>
-            
+            <div class="fields-tags-container">${tagsHtml(index)}</div>
+
             <div class="pattern-preview">
               <div class="pattern-preview-label">Aperçu :</div>
               <div class="pattern-preview-example" id="preview-${index}"></div>
@@ -476,75 +617,62 @@ function showCategoriesSelection() {
         </div>
       </div>
     `;
-    index++;
   });
 
   categoriesList.innerHTML = html;
   window.availableCategories = categoriesMap;
+
+  // Réappliquer la sélection précédente si la catégorie existe toujours
+  categoryLabels.forEach((label, index) => {
+    if (previous.has(label)) {
+      document.getElementById("cat-" + index).checked = true;
+      setCategorySelected(index, true);
+    }
+  });
+
+  updateTotalFilesCount();
 }
 
-function toggleCategoryAccordion(event, index, label) {
-  if (event.target.type === "checkbox") {
-    return;
-  }
-
-  const checkbox = document.getElementById("cat-" + index);
+function setCategorySelected(index, checked) {
+  const label = categoryLabels[index];
   const categoryItem = document.getElementById("category-item-" + index);
   const accordion = document.getElementById("accordion-" + index);
 
+  if (checked) {
+    categoryItem.classList.add("selected");
+    accordion.classList.add("open");
+    selectedCategories.set(label, {
+      pattern: document.getElementById(`pattern-${index}`).value,
+      files: window.availableCategories.get(label),
+    });
+    updateCategoryPattern(index);
+  } else {
+    categoryItem.classList.remove("selected");
+    accordion.classList.remove("open");
+    selectedCategories.delete(label);
+  }
+
+  updateTotalFilesCount();
+}
+
+function toggleCategoryAccordion(event, index) {
+  if (event.target.type === "checkbox") return;
+  const checkbox = document.getElementById("cat-" + index);
   checkbox.checked = !checkbox.checked;
-
-  if (checkbox.checked) {
-    categoryItem.classList.add("selected");
-    accordion.classList.add("open");
-
-    const pattern = document.getElementById(`pattern-${index}`).value;
-    selectedCategories.set(label, {
-      pattern: pattern,
-      files: window.availableCategories.get(label),
-    });
-
-    updateCategoryPattern(index, label);
-  } else {
-    categoryItem.classList.remove("selected");
-    accordion.classList.remove("open");
-    selectedCategories.delete(label);
-  }
-
-  updateTotalFilesCount();
+  setCategorySelected(index, checkbox.checked);
 }
 
-function handleCheckboxChange(event, index, label) {
+function handleCheckboxChange(event, index) {
   event.stopPropagation();
-
-  const checkbox = document.getElementById("cat-" + index);
-  const categoryItem = document.getElementById("category-item-" + index);
-  const accordion = document.getElementById("accordion-" + index);
-
-  if (checkbox.checked) {
-    categoryItem.classList.add("selected");
-    accordion.classList.add("open");
-
-    const pattern = document.getElementById(`pattern-${index}`).value;
-    selectedCategories.set(label, {
-      pattern: pattern,
-      files: window.availableCategories.get(label),
-    });
-
-    updateCategoryPattern(index, label);
-  } else {
-    categoryItem.classList.remove("selected");
-    accordion.classList.remove("open");
-    selectedCategories.delete(label);
-  }
-
-  updateTotalFilesCount();
+  setCategorySelected(index, event.target.checked);
 }
 
-function insertFieldInAccordionFromTag(index, field, label) {
+function insertFieldInAccordionFromTag(index, fieldPos) {
+  const field = selectedFields[fieldPos];
+  if (!field) return;
   const input = document.getElementById(`pattern-${index}`);
-  input.value += `{${field}}`;
-  updateCategoryPattern(index, label);
+  input.value += `{${field.name}}`;
+  updateCategoryPattern(index);
 }
 
 function buildFileName(pattern, champsValues, pj) {
@@ -605,24 +733,16 @@ function buildFileName(pattern, champsValues, pj) {
   return fileName;
 }
 
-function updateCategoryPattern(index, label) {
-  const input = document.getElementById(`pattern-${index}`);
-  const pattern = input.value;
+function updateCategoryPattern(index) {
+  const pattern = document.getElementById(`pattern-${index}`).value;
+  const data = selectedCategories.get(categoryLabels[index]);
 
-  const data = selectedCategories.get(label);
   if (data && data.files.length > 0) {
     data.pattern = pattern;
-
-    const previewEl = document.getElementById(`preview-${index}`);
     const sampleFile = data.files[0];
-
-    const preview = buildFileName(
-      pattern,
-      sampleFile.champs_values,
-      sampleFile,
-    );
     const extension = sampleFile.filename.match(/\.[^.]+$/)?.[0] || "";
-    previewEl.textContent = preview + extension;
+    document.getElementById(`preview-${index}`).textContent =
+      finalBaseName(pattern, sampleFile) + extension;
   }
 }
 
@@ -653,6 +773,9 @@ async function downloadSelected() {
 
   document.getElementById("categories-section").style.display = "none";
   document.getElementById("progress-section").style.display = "block";
+  document
+    .getElementById("download-loader")
+    ?.style.setProperty("display", "block");
   // Réinitialiser les logs
   const logsContent = document.getElementById("download-logs-content");
   logsContent.innerHTML = "";
@@ -697,9 +820,7 @@ async function downloadSelected() {
 
   async function downloadOne({ file, data }) {
     const extension = file.filename.match(/\.[^.]+$/)?.[0] || "";
-    const baseName = sanitizeFilename(
-      buildFileName(data.pattern, file.champs_values, file),
-    );
+    const baseName = finalBaseName(data.pattern, file);
     const finalFilename = reserveName(baseName, extension);
     let fileHandle = null;
 
@@ -790,6 +911,9 @@ async function downloadSelected() {
 
   document.querySelector("#progress-section .fr-h3").textContent =
     "Téléchargement terminé";
+  document
+    .getElementById("download-loader")
+    ?.style.setProperty("display", "none");
 
   progressSection.style.display = "block";
   downloadComplete.style.display = "block";
@@ -887,53 +1011,11 @@ document.addEventListener("DOMContentLoaded", function () {
   if (folderBtn) folderBtn.addEventListener("click", selectFolder);
 
   if (validateBtn) {
-    validateBtn.addEventListener("click", async () => {
+    validateBtn.addEventListener("click", () => {
       if (selectedFields.length === 0) {
         alert("Veuillez sélectionner au moins un champ");
         return;
       }
-
-      // Récupérer les dates et recharger les dossiers si nécessaire
-      const dateDebut = document.getElementById("date-debut").value;
-      const dateFin = document.getElementById("date-fin").value;
-
-      // Si des dates sont spécifiées, recharger les dossiers filtrés
-      if (dateDebut || dateFin) {
-        const useProxy = document.getElementById("use-proxy").checked;
-        const demarcheNumber = document.getElementById("demarche-number").value;
-
-        try {
-          const dossiersRes = await fetch(
-            `/api/demarche/${demarcheNumber}/dossiers`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                token: apiToken,
-                use_proxy: useProxy,
-                date_debut: dateDebut,
-                date_fin: dateFin,
-              }),
-            },
-          );
-
-          if (!dossiersRes.ok) {
-            const error = await dossiersRes.json();
-            throw new Error(error.error || "Erreur lors du filtrage");
-          }
-
-          dossiersData = await dossiersRes.json();
-
-          // Message informatif
-          alert(
-            `${dossiersData.length} dossier(s) trouvé(s) pour la période sélectionnée`,
-          );
-        } catch (error) {
-          alert("Erreur lors du filtrage par dates: " + error.message);
-          return;
-        }
-      }
-
       showCategoriesSelection();
     });
   }
@@ -941,10 +1023,10 @@ document.addEventListener("DOMContentLoaded", function () {
   if (downloadBtn) downloadBtn.addEventListener("click", downloadSelected);
   if (quitBtn) quitBtn.addEventListener("click", quitApp);
 
-  // Bouton pour appliquer le filtre de dates
+  // Filtre de dates : appliqué localement, sans rappeler l'API
   const applyDateFilterBtn = document.getElementById("apply-date-filter");
   if (applyDateFilterBtn) {
-    applyDateFilterBtn.addEventListener("click", async () => {
+    applyDateFilterBtn.addEventListener("click", () => {
       const dateDebut = document.getElementById("date-debut").value;
       const dateFin = document.getElementById("date-fin").value;
 
@@ -952,97 +1034,29 @@ document.addEventListener("DOMContentLoaded", function () {
         alert("Veuillez sélectionner au moins une date");
         return;
       }
-
-      const useProxy = document.getElementById("use-proxy").checked;
-      const demarcheNumber = document.getElementById("demarche-number").value;
-
-      try {
-        applyDateFilterBtn.disabled = true;
-        applyDateFilterBtn.textContent = "Filtrage en cours...";
-
-        const dossiersRes = await fetch(
-          `/api/demarche/${demarcheNumber}/dossiers`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              token: apiToken,
-              use_proxy: useProxy,
-              date_debut: dateDebut,
-              date_fin: dateFin,
-            }),
-          },
-        );
-
-        if (!dossiersRes.ok) {
-          const error = await dossiersRes.json();
-          throw new Error(error.error || "Erreur lors du filtrage");
-        }
-
-        dossiersData = await dossiersRes.json();
-
-        alert(
-          `✅ ${dossiersData.length} dossier(s) trouvé(s) pour la période sélectionnée`,
-        );
-
-        // Recharger les catégories avec les dossiers filtrés
-        showCategoriesSelection();
-      } catch (error) {
-        alert("❌ Erreur lors du filtrage : " + error.message);
-      } finally {
-        applyDateFilterBtn.disabled = false;
-        applyDateFilterBtn.textContent = "Appliquer le filtre";
+      if (dateDebut && dateFin && dateDebut > dateFin) {
+        alert("La date de début doit précéder la date de fin");
+        return;
       }
+
+      dossiersData = filterByDepotDate(allDossiersData, dateDebut, dateFin);
+      alert(
+        `✅ ${dossiersData.length} dossier(s) trouvé(s) pour la période sélectionnée`,
+      );
+      showCategoriesSelection();
     });
   }
 
-  // Bouton pour réinitialiser le filtre de dates
   const resetDateFilterBtn = document.getElementById("reset-date-filter");
   if (resetDateFilterBtn) {
-    resetDateFilterBtn.addEventListener("click", async () => {
-      // Vider les champs de dates
+    resetDateFilterBtn.addEventListener("click", () => {
       document.getElementById("date-debut").value = "";
       document.getElementById("date-fin").value = "";
-
-      const useProxy = document.getElementById("use-proxy").checked;
-      const demarcheNumber = document.getElementById("demarche-number").value;
-
-      try {
-        resetDateFilterBtn.disabled = true;
-        resetDateFilterBtn.textContent = "Chargement...";
-
-        // Recharger TOUS les dossiers (sans filtre)
-        const dossiersRes = await fetch(
-          `/api/demarche/${demarcheNumber}/dossiers`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              token: apiToken,
-              use_proxy: useProxy,
-            }),
-          },
-        );
-
-        if (!dossiersRes.ok) {
-          const error = await dossiersRes.json();
-          throw new Error(error.error || "Erreur lors du rechargement");
-        }
-
-        dossiersData = await dossiersRes.json();
-
-        alert(
-          `✅ Filtre réinitialisé - ${dossiersData.length} dossier(s) au total`,
-        );
-
-        // Recharger les catégories avec tous les dossiers
-        showCategoriesSelection();
-      } catch (error) {
-        alert("❌ Erreur lors de la réinitialisation : " + error.message);
-      } finally {
-        resetDateFilterBtn.disabled = false;
-        resetDateFilterBtn.textContent = "Réinitialiser";
-      }
+      dossiersData = allDossiersData;
+      alert(
+        `✅ Filtre réinitialisé - ${dossiersData.length} dossier(s) au total`,
+      );
+      showCategoriesSelection();
     });
   }
 
