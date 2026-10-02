@@ -644,7 +644,7 @@ async function downloadSelected() {
   }
 
   const useProxy = document.getElementById("use-proxy").checked;
-  const CONCURRENCY = 6;
+  const CONCURRENCY = 6; // = limite de connexions du navigateur vers 127.0.0.1
 
   // Réinitialiser la barre avant d'afficher
   document.getElementById("progress-fill").style.width = "0%";
@@ -659,23 +659,49 @@ async function downloadSelected() {
 
   // Construire la liste de toutes les tâches
   const tasks = [];
-  for (const [categoryLabel, data] of selectedCategories) {
+  for (const [, data] of selectedCategories) {
     for (const file of data.files) {
       tasks.push({ file, data });
     }
   }
 
+  // Gros fichiers d'abord : évite qu'un gros fichier finisse seul à la fin
+  tasks.sort((a, b) => (Number(b.file.size) || 0) - (Number(a.file.size) || 0));
+
   const totalFiles = tasks.length;
   let completed = 0;
   let errorCount = 0;
 
-  // Verrou en mémoire pour éviter les collisions de noms entre téléchargements parallèles
-  const reservedFilenames = new Set();
+  // Noms déjà présents dans le dossier, lus une seule fois.
+  // En minuscules car Windows ne distingue pas la casse.
+  const usedNames = new Set();
+  try {
+    for await (const name of selectedFolder.keys()) {
+      usedNames.add(name.toLowerCase());
+    }
+  } catch (e) {
+    console.warn("Lecture du dossier impossible :", e);
+  }
+
+  // Réservation synchrone (aucun await) => pas de collision entre tâches parallèles
+  function reserveName(baseName, extension) {
+    let candidate = baseName + extension;
+    let counter = 1;
+    while (usedNames.has(candidate.toLowerCase())) {
+      candidate = `${baseName}_${counter}${extension}`;
+      counter++;
+    }
+    usedNames.add(candidate.toLowerCase());
+    return candidate;
+  }
 
   async function downloadOne({ file, data }) {
-    let newFilename = buildFileName(data.pattern, file.champs_values, file);
     const extension = file.filename.match(/\.[^.]+$/)?.[0] || "";
-    newFilename = sanitizeFilename(newFilename) + extension;
+    const baseName = sanitizeFilename(
+      buildFileName(data.pattern, file.champs_values, file),
+    );
+    const finalFilename = reserveName(baseName, extension);
+    let fileHandle = null;
 
     try {
       const response = await fetch("/api/download-file", {
@@ -684,46 +710,56 @@ async function downloadSelected() {
         body: JSON.stringify({ url: file.url, use_proxy: useProxy }),
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const blob = await response.blob();
-
-      // Résolution du nom unique : vérifier en mémoire + sur disque
-      let finalFilename = newFilename;
-      let counter = 1;
-      while (
-        reservedFilenames.has(finalFilename) ||
-        (await (async () => {
-          try {
-            await selectedFolder.getFileHandle(finalFilename, {
-              create: false,
-            });
-            return true;
-          } catch {
-            return false;
-          }
-        })())
-      ) {
-        const namePart = newFilename.replace(extension, "");
-        finalFilename = `${namePart}_${counter}${extension}`;
-        counter++;
+      if (!response.ok) {
+        let msg = `HTTP ${response.status}`;
+        try {
+          msg = (await response.json()).error || msg;
+        } catch {}
+        throw new Error(msg);
       }
-      reservedFilenames.add(finalFilename);
 
-      const fileHandle = await selectedFolder.getFileHandle(finalFilename, {
+      // Taille attendue : Content-Length du serveur, sinon taille annoncée par DS
+      const expectedSize =
+        Number(response.headers.get("Content-Length")) ||
+        Number(file.size) ||
+        0;
+
+      fileHandle = await selectedFolder.getFileHandle(finalFilename, {
         create: true,
       });
       const writable = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
+      // Écriture au fil de l'eau, sans charger le fichier en mémoire
+      // (pipeTo ferme le fichier en cas de succès, l'annule en cas d'erreur)
+      await response.body.pipeTo(writable);
 
-      reservedFilenames.delete(finalFilename);
+      // Contrôle d'intégrité : détecte un transfert coupé en cours de route
+      if (expectedSize) {
+        const written = (await fileHandle.getFile()).size;
+        if (written !== expectedSize) {
+          throw new Error(
+            `fichier incomplet (${written} / ${expectedSize} octets)`,
+          );
+        }
+      }
+
       completed++;
       addDownloadLog(file.dossier_number, finalFilename, "success");
     } catch (error) {
       console.error("Erreur:", error);
+      // Supprimer un éventuel fichier vide ou tronqué
+      if (fileHandle) {
+        try {
+          await selectedFolder.removeEntry(finalFilename);
+        } catch {}
+      }
+      usedNames.delete(finalFilename.toLowerCase());
       errorCount++;
-      addDownloadLog(file.dossier_number, newFilename, "error", error.message);
+      addDownloadLog(
+        file.dossier_number,
+        finalFilename,
+        "error",
+        error.message,
+      );
     }
 
     updateProgress(completed + errorCount, totalFiles);
